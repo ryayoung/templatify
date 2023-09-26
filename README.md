@@ -8,6 +8,7 @@ It's a **zero-cost**, frictionless abstraction that provides convenience,
 static type safety, runtime template argument validation, and enforces
 a consistent, declarative programming style, all in less than **50 lines of code**.
 
+`pip install templatify`
 
 ```py
 # An efficient jinja2 template renderer
