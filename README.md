@@ -18,16 +18,16 @@ def greet_user(name: str, age: int = 10):
 print(greet_user("John"))
 ```
 
-#### Declarative Nature
+### Declarative Nature
 
 Before the reader of your code sees the string you defined, they will know
 it's a template, and they will know what its dependencies are.
 
-#### Static Type Safety
+### Static Type Safety
 
 Your type checker will enforce the function signature you've defined.
 
-#### Efficiency
+### Efficiency
 
 All runtime logic, validation, and template creation happens **only at the moment
 your function is created**.
@@ -45,7 +45,7 @@ template happens **only once**. Even the attribute lookup on `Template.render()`
 is done in advance, so your calls to `greet_user` are as frictionless as possible.
 
 
-#### Zero-Overhead Runtime Dependency Safety
+### Zero-Overhead Runtime Dependency Safety
 
 `@template` will dynamically generate a function that matches the signature of the one you provided.
 It will pass the given arguments **directly** to the render function of the template that was *already*
@@ -55,7 +55,7 @@ Therefore, `@template` achieves runtime validation that **all variables required
 and it does so without any compute cost after your function is created.
 
 
-#### What about indentation?
+### What about indentation?
 
 `@template` will dedent your docstring for you, and remove a single leading newline character if one is present,
 before creating the jinja template.
