@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "templatify"
-version = '0.0.1'
+version = '0.0.2'
 python_requires = ">=3.9"
 dependencies = [
     "jinja2",
