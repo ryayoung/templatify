@@ -27,6 +27,7 @@ def template(
     env: Environment | None = None,
     globals: dict | None = None,
     include_builtins: bool = True,
+    debug: bool = False,
 ):
     """
     Decorator to create a template function.
@@ -45,19 +46,18 @@ def template(
         before imports (e.g. `str`, `len`, `print`) in the template environment.
         If True and `globals` is provided, the builtins will be added first, and
         then `globals` will be added on top of that.
+    debug : bool, default False
+        If True, then the generated code for the template function will be printed
+        to stdout.
     """
     env = env or create_environment(globals, include_builtins)
 
     def decorator(func):
         doc = get_formatted_docstring(func)
         param_defaults = get_validated_func_params(func, env, doc)
-        render_func = env.from_string(doc).render
-
-        if any(isinstance(v, Field) for v in param_defaults.values()):
-            return generate_template_function_with_fields(
-                func, render_func, param_defaults
-            )
-        return generate_template_function(func, render_func, param_defaults)
+        return generate_template_function(
+            func, env.from_string(doc).render, param_defaults, debug
+        )
 
     if callable(__func):
         return decorator(__func)
@@ -116,11 +116,16 @@ def generate_template_function(
     original_func: Callable,
     render_func: Callable,
     param_defaults: dict,
+    debug: bool,
 ):
     """
     Dynamically generates a function with the same parameters (names, AND values)
     as `original_func`. The implementation simply passes them to `render_func`.
     """
+    if any(isinstance(v, Field) for v in param_defaults.values()):
+        return generate_template_function_with_fields(
+            original_func, render_func, param_defaults, debug
+        )
 
     def define_param(name: str, default: Any) -> str:
         if default is inspect.Parameter.empty:
@@ -136,6 +141,8 @@ def generate_template_function(
 def {func_name}({params_definition}) -> str:
     return render({arguments_str})
 """
+    if debug:
+        print(func_definition)
 
     namespace = {
         "wraps": wraps,
@@ -151,6 +158,7 @@ def generate_template_function_with_fields(
     original_func: Callable,
     render_func: Callable,
     param_defaults: dict,
+    debug: bool,
 ):
     """
     Used instead of `generate_template_function`, whenever any of the values in
@@ -203,6 +211,8 @@ def generate_template_function_with_fields(
 def {func_name}({", ".join(param_definitions)}) -> str:
     return render({", ".join(arg_definitions)})
 """
+    if debug:
+        print(func_definition)
 
     namespace = {
         "wraps": wraps,
@@ -239,8 +249,8 @@ if __name__ == "__main__":
     from dataclasses import field
 
     @template
-    def greet(name: str, age: int = field(default=10, init=False)):
+    def greet3(name: str, age: int = field(default=10, init=False)):
         "Hello {{ name|upper }}, you are {{ age }} years old."
 
-    print(greet("John"))  # Hello JOHN, you are 10 years old.
+    print(greet3("John"))  # Hello JOHN, you are 10 years old.
     # print(greet("John", 10))  # TypeError: greet() takes 1 positional argument but 2 were given
