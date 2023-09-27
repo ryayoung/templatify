@@ -1,6 +1,7 @@
 from typing import Callable, Any
 import inspect
 from jinja2 import Environment
+from dataclasses import Field
 from jinja2.meta import find_undeclared_variables
 from functools import wraps
 import textwrap
@@ -17,6 +18,7 @@ class TemplateError(Exception):
 
 # Note that there are purposefully no type annotations on `template`. We want
 # the type checker to enforce the types of the decorated function instead.
+
 
 def template(
     __func=None,
@@ -49,45 +51,17 @@ def template(
     def decorator(func):
         doc = get_formatted_docstring(func)
         param_defaults = get_validated_func_params(func, env, doc)
-
         render_func = env.from_string(doc).render
+
+        if any(isinstance(v, Field) for v in param_defaults.values()):
+            return generate_template_function_with_fields(
+                func, render_func, param_defaults
+            )
         return generate_template_function(func, render_func, param_defaults)
 
     if callable(__func):
         return decorator(__func)
     return decorator
-
-
-def generate_template_function(
-    original_func: Callable,
-    render_func: Callable,
-    param_defaults: dict,
-):
-    """
-    Dynamically generates a function with the same parameters (names, AND values)
-    as `original_func`. The implementation simply passes them to `render_func`.
-    """
-    define_param = lambda name, default: (
-        name if default_is_empty(default) else f"{name}=_defaults_['{name}']"
-    )
-    params_definition = ", ".join(define_param(k, v) for k, v in param_defaults.items())
-    arguments_str = ", ".join(f"{name}={name}" for name in param_defaults)
-
-    func_name = "wrapper"
-    func_definition = f"""\
-@wraps(func)
-def {func_name}({params_definition}) -> str:
-    return render({arguments_str})
-"""
-
-    namespace = {
-        "wraps": wraps,
-        "func": original_func,
-        "render": render_func,
-        "_defaults_": param_defaults,
-    }
-    exec(func_definition, namespace)
-    return namespace[func_name]
 
 
 def get_formatted_docstring(func: Callable) -> str:
@@ -138,17 +112,107 @@ def get_validated_func_params(
     return params
 
 
-def default_is_empty(default: Any) -> bool:
+def generate_template_function(
+    original_func: Callable,
+    render_func: Callable,
+    param_defaults: dict,
+):
     """
-    Determines whether the parameter whose default is `default` is a required
-    parameter or not.
-    This function exists because some objects (e.g. pandas.DataFrame)
-    raise an exception when you try to check equality as a boolean.
+    Dynamically generates a function with the same parameters (names, AND values)
+    as `original_func`. The implementation simply passes them to `render_func`.
     """
-    try:
-        return bool(default == inspect.Parameter.empty)
-    except Exception:
+
+    def define_param(name: str, default: Any) -> str:
+        if default is inspect.Parameter.empty:
+            return name
+        return f"{name}=_defaults_['{name}']"
+
+    params_definition = ", ".join(define_param(k, v) for k, v in param_defaults.items())
+    arguments_str = ", ".join(f"{name}={name}" for name in param_defaults)
+
+    func_name = original_func.__name__
+    func_definition = f"""\
+@wraps(func)
+def {func_name}({params_definition}) -> str:
+    return render({arguments_str})
+"""
+
+    namespace = {
+        "wraps": wraps,
+        "func": original_func,
+        "render": render_func,
+        "_defaults_": param_defaults,
+    }
+    exec(func_definition, namespace)
+    return namespace[func_name]
+
+
+def generate_template_function_with_fields(
+    original_func: Callable,
+    render_func: Callable,
+    param_defaults: dict,
+):
+    """
+    Used instead of `generate_template_function`, whenever any of the values in
+    `param_defaults` are instances of `dataclasses.Field`.
+    """
+    from dataclasses import MISSING, _MISSING_TYPE
+
+    def define_param(name: str, default: Any) -> str:
+        if default is inspect.Parameter.empty:
+            return name
+        if isinstance(default, Field):
+            return f"{name}=_MISSING_TYPE"
+        return f"{name}=_defaults_['{name}']"
+
+    def define_argument(name: str, default: Any) -> str:
+        if not isinstance(default, Field):
+            return name
+
+        if default.default is not MISSING:
+            attribute_call = f".default"
+        elif default.default_factory is not MISSING:
+            attribute_call = f".default_factory()"
+        else:
+            return "None"
+
+        if default.init is False:
+            return f"_defaults_['{name}']{attribute_call}"
+        return (
+            f"{name} if {name} is not _MISSING_TYPE else"
+            + f" _defaults_['{name}']{attribute_call}"
+        )
+
+    def is_field_init_false(val) -> bool:
+        if isinstance(val, Field):
+            return val.init is False
         return False
+
+    param_definitions = [
+        define_param(k, v)
+        for k, v in param_defaults.items()
+        if not is_field_init_false(v)
+    ]
+    arg_definitions = [
+        f"{k}=" + define_argument(k, v) for k, v in param_defaults.items()
+    ]
+
+    func_name = original_func.__name__
+    func_definition = f"""\
+@wraps(func)
+def {func_name}({", ".join(param_definitions)}) -> str:
+    return render({", ".join(arg_definitions)})
+"""
+
+    namespace = {
+        "wraps": wraps,
+        "func": original_func,
+        "render": render_func,
+        "_MISSING_TYPE": _MISSING_TYPE,
+        "_defaults_": param_defaults,
+    }
+    exec(func_definition, namespace)
+    return namespace[func_name]
 
 
 if __name__ == "__main__":
@@ -170,3 +234,13 @@ if __name__ == "__main__":
         "Hello {{ name|upper }}, you are {{ age }} years old."
 
     print(greet2())  # Hello JOHN, you are 10 years old.
+
+    # EXAMPLE 3
+    from dataclasses import field
+
+    @template
+    def greet(name: str, age: int = field(default=10, init=False)):
+        "Hello {{ name|upper }}, you are {{ age }} years old."
+
+    print(greet("John"))  # Hello JOHN, you are 10 years old.
+    # print(greet("John", 10))  # TypeError: greet() takes 1 positional argument but 2 were given
